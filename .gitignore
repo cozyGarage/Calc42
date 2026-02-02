@@ -1,0 +1,13 @@
+# Binaries
+calc42-cli
+calc42-gui
+
+# Objects
+obj/
+*.o
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
