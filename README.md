@@ -365,39 +365,13 @@ CFLAGS += -fstack-protector-strong -D_FORTIFY_SOURCE=2
 - **Error Handling**: Always check return values
 - **Memory**: Every malloc has a corresponding free
 
-## Roadmap
+## 🗺️ Future Roadmap
 
-### Phase 1: Core (✅ Complete)
+CALC42 1.0 is a solid foundation, but there's more to come. See our [ROADMAP.md](ROADMAP.md) for planned features like plotting and complex numbers.
 
-- [x] Expression tokenizer
-- [x] Shunting-yard parser
-- [x] AST evaluator
-- [x] Basic arithmetic
-- [x] Programmer mode
-- [x] CLI REPL
-- [x] Error handling
-- [x] Logging system
-- [x] Memory safety
+## 🧪 Testing & Quality
 
-### Phase 2: Extended Modes (✅ Complete)
-
-- [x] Statistics functions (mean, median, variance, stddev, z-score, correlation)
-- [x] Probability functions (nCr, nPr, factorial, distributions)
-- [x] Discrete math (GCD, LCM, modular arithmetic, primality, sets)
-- [x] Linear algebra (vectors, matrices, determinant)
-
-### Phase 3: GUI (✅ Complete)
-
-- [x] GTK4 window with mode panels
-- [x] Standard, Programmer, Statistics, Probability, Discrete, and Linalg panels
-- [x] Scrollable history with safe multi-threading
-- [x] Responsive layout with base/mode selectors
-
-### Phase 4: Polish (✅ Complete)
-
-- [x] Comprehensive test suite (49 tests)
-- [x] Memory leak verification (valgrind clean)
-- [x] Readline integration for CLI history
+We maintain 100% pass rate across 240+ automated tests. Detailed reports can be found in [TESTING.md](TESTING.md).
 
 ## Resources
 
@@ -422,8 +396,8 @@ Educational project - see 42 school curriculum for details.
 
 ## Author
 
-Created for the 42 curriculum by `<your_login>`.
+Created for the 42 curriculum by cozygarage.
 
 ---
 
-**Note**: This is an active development project. The GUI and advanced calculator modes are planned for future releases. The current implementation focuses on a solid, secure foundation with core arithmetic and programmer operations.
+**Status**: CALC42 1.0 is stable and feature-complete.
