@@ -25,6 +25,56 @@ static value_t eval_node(ast_node_t *node, engine_context_t *ctx,
                          error_t *error);
 
 // Evaluate function calls
+// Helper to collect all arguments as a flattened array of doubles.
+// Handles nesting: collect_args(1, [2, 3], matrix(2, 1, 4, 5)) -> [1, 2, 3, 4,
+// 5]
+static double *collect_args(ast_node_t *node, engine_context_t *ctx,
+                            error_t *error, size_t *out_count) {
+  *out_count = 0;
+  if (node->child_count == 0)
+    return NULL;
+
+  value_t *results = safe_malloc(node->child_count * sizeof(value_t));
+  size_t total = 0;
+
+  for (size_t i = 0; i < node->child_count; i++) {
+    results[i] = eval_node(node->children[i], ctx, error);
+    if (!error_is_ok(*error)) {
+      for (size_t j = 0; j <= i; j++)
+        value_free(&results[j]);
+      safe_free(results);
+      return NULL;
+    }
+    if (results[i].type == VALUE_NUMBER) {
+      total++;
+    } else if (results[i].type == VALUE_ARRAY) {
+      total += results[i].as.array.size;
+    } else if (results[i].type == VALUE_MATRIX) {
+      total += results[i].as.matrix.rows * results[i].as.matrix.cols;
+    }
+  }
+
+  double *data = safe_malloc(total * sizeof(double));
+  size_t pos = 0;
+  for (size_t i = 0; i < node->child_count; i++) {
+    if (results[i].type == VALUE_NUMBER) {
+      data[pos++] = results[i].as.number;
+    } else if (results[i].type == VALUE_ARRAY) {
+      memcpy(data + pos, results[i].as.array.data,
+             results[i].as.array.size * sizeof(double));
+      pos += results[i].as.array.size;
+    } else if (results[i].type == VALUE_MATRIX) {
+      size_t size = results[i].as.matrix.rows * results[i].as.matrix.cols;
+      memcpy(data + pos, results[i].as.matrix.data, size * sizeof(double));
+      pos += size;
+    }
+    value_free(&results[i]);
+  }
+  safe_free(results);
+  *out_count = total;
+  return data;
+}
+
 static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
                              error_t *error) {
   const char *fname = node->op;
@@ -192,27 +242,22 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
                             "Stats functions require at least 1 argument");
       return value_number(0);
     }
-    double *data = safe_malloc(node->child_count * sizeof(double));
-    for (size_t i = 0; i < node->child_count; i++) {
-      value_t arg = eval_node(node->children[i], ctx, error);
-      if (!error_is_ok(*error)) {
-        safe_free(data);
-        return value_number(0);
-      }
-      data[i] = arg.as.number;
-      value_free(&arg);
-    }
+    size_t data_size;
+    double *data = collect_args(node, ctx, error, &data_size);
+    if (!error_is_ok(*error))
+      return value_number(0);
+
     double result = 0;
     if (strcmp(fname, "mean") == 0)
-      result = stats_mean(data, node->child_count, error);
+      result = stats_mean(data, data_size, error);
     else if (strcmp(fname, "median") == 0)
-      result = stats_median(data, node->child_count, error);
+      result = stats_median(data, data_size, error);
     else if (strcmp(fname, "mode") == 0)
-      result = stats_mode(data, node->child_count, error);
+      result = stats_mode(data, data_size, error);
     else if (strcmp(fname, "var") == 0)
-      result = stats_variance(data, node->child_count, error);
+      result = stats_variance(data, data_size, error);
     else if (strcmp(fname, "stddev") == 0)
-      result = stats_stddev(data, node->child_count, error);
+      result = stats_stddev(data, data_size, error);
 
     safe_free(data);
     return value_number(result);
@@ -228,21 +273,20 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
     value_t val_arg = eval_node(node->children[0], ctx, error);
     if (!error_is_ok(*error))
       return value_number(0);
-    double value = val_arg.as.number;
-    value_free(&val_arg);
 
-    size_t data_size = node->child_count - 1;
-    double *data = safe_malloc(data_size * sizeof(double));
-    for (size_t i = 0; i < data_size; i++) {
-      value_t arg = eval_node(node->children[i + 1], ctx, error);
-      if (!error_is_ok(*error)) {
-        safe_free(data);
-        return value_number(0);
-      }
-      data[i] = arg.as.number;
-      value_free(&arg);
+    // Temp node for rest
+    ast_node_t temp;
+    temp.children = node->children + 1;
+    temp.child_count = node->child_count - 1;
+    size_t data_size;
+    double *data = collect_args(&temp, ctx, error, &data_size);
+    if (!error_is_ok(*error)) {
+      value_free(&val_arg);
+      return value_number(0);
     }
-    double result = stats_zscore(value, data, data_size, error);
+
+    double result = stats_zscore(val_arg.as.number, data, data_size, error);
+    value_free(&val_arg);
     safe_free(data);
     return value_number(result);
   }
@@ -340,21 +384,16 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
   // Linear Algebra - Vector operations
   // vector(1, 2, 3) -> [1, 2, 3]
   if (strcmp(fname, "vector") == 0) {
-    if (node->child_count == 0) {
+    size_t data_size;
+    double *data = collect_args(node, ctx, error, &data_size);
+    if (!error_is_ok(*error))
+      return value_number(0);
+    if (data_size == 0) {
+      safe_free(data);
       *error = error_create(ERR_INVALID_ARGS, "vector requires elements");
       return value_number(0);
     }
-    double *vec_data = safe_malloc(node->child_count * sizeof(double));
-    for (size_t i = 0; i < node->child_count; i++) {
-      value_t arg = eval_node(node->children[i], ctx, error);
-      if (!error_is_ok(*error)) {
-        safe_free(vec_data);
-        return value_number(0);
-      }
-      vec_data[i] = arg.as.number;
-      value_free(&arg);
-    }
-    return value_array(vec_data, node->child_count);
+    return value_array(data, data_size);
   }
 
   // matrix(rows, cols, e1, e2, ...)
@@ -404,10 +443,9 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
       strcmp(fname, "vec_mag") == 0) {
 
     if (strcmp(fname, "vec_scale") == 0) {
-      // vec_scale(scalar, v1, v2, v3, ...)
       if (node->child_count < 2) {
         *error = error_create(ERR_INVALID_ARGS,
-                              "vec_scale requires scalar and vector elements");
+                              "vec_scale requires scalar and vector");
         return value_number(0);
       }
       value_t scalar_val = eval_node(node->children[0], ctx, error);
@@ -416,94 +454,93 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
       double scalar = scalar_val.as.number;
       value_free(&scalar_val);
 
-      size_t vec_size = node->child_count - 1;
-      double *vec_data = safe_malloc(vec_size * sizeof(double));
-      for (size_t i = 0; i < vec_size; i++) {
-        value_t arg = eval_node(node->children[i + 1], ctx, error);
-        if (!error_is_ok(*error)) {
-          safe_free(vec_data);
-          return value_number(0);
-        }
-        vec_data[i] = arg.as.number;
-        value_free(&arg);
-      }
+      ast_node_t temp;
+      temp.children = node->children + 1;
+      temp.child_count = node->child_count - 1;
+      size_t vec_size;
+      double *vec_data = collect_args(&temp, ctx, error, &vec_size);
+      if (!error_is_ok(*error))
+        return value_number(0);
+
       value_t v = value_array(vec_data, vec_size);
       value_t result = linalg_vec_scale(&v, scalar, error);
       value_free(&v);
       return result;
 
     } else if (strcmp(fname, "vec_mag") == 0) {
-      // vec_mag(v1, v2, v3, ...)
-      if (node->child_count == 0) {
-        *error =
-            error_create(ERR_INVALID_ARGS, "vec_mag requires vector elements");
+      size_t data_size;
+      double *data = collect_args(node, ctx, error, &data_size);
+      if (!error_is_ok(*error))
+        return value_number(0);
+      if (data_size == 0) {
+        safe_free(data);
+        *error = error_create(ERR_INVALID_ARGS, "vec_mag requires elements");
         return value_number(0);
       }
-      double *vec_data = safe_malloc(node->child_count * sizeof(double));
-      for (size_t i = 0; i < node->child_count; i++) {
-        value_t arg = eval_node(node->children[i], ctx, error);
-        if (!error_is_ok(*error)) {
-          safe_free(vec_data);
-          return value_number(0);
-        }
-        vec_data[i] = arg.as.number;
-        value_free(&arg);
-      }
-      value_t v = value_array(vec_data, node->child_count);
+      value_t v = value_array(data, data_size);
       double mag = linalg_vec_magnitude(&v, error);
       value_free(&v);
       return value_number(mag);
 
     } else {
-      // vec_add, vec_sub, vec_dot: split args in half
-      if (node->child_count < 2 || node->child_count % 2 != 0) {
+      // vec_add, vec_sub, vec_dot
+      if (node->child_count == 2) {
+        value_t a = eval_node(node->children[0], ctx, error);
+        if (!error_is_ok(*error))
+          return value_number(0);
+        value_t b = eval_node(node->children[1], ctx, error);
+        if (!error_is_ok(*error)) {
+          value_free(&a);
+          return value_number(0);
+        }
+
+        if (a.type == VALUE_ARRAY && b.type == VALUE_ARRAY) {
+          value_t result;
+          if (strcmp(fname, "vec_add") == 0)
+            result = linalg_vec_add(&a, &b, error);
+          else if (strcmp(fname, "vec_sub") == 0)
+            result = linalg_vec_sub(&a, &b, error);
+          else
+            result = value_number(linalg_vec_dot(&a, &b, error));
+          value_free(&a);
+          value_free(&b);
+          return result;
+        }
+        value_free(&a);
+        value_free(&b);
+      }
+
+      size_t total;
+      double *full = collect_args(node, ctx, error, &total);
+      if (!error_is_ok(*error))
+        return value_number(0);
+      if (total < 2 || total % 2 != 0) {
+        safe_free(full);
         *error =
-            error_create(ERR_INVALID_ARGS,
-                         "Vector operations require even number of arguments");
+            error_create(ERR_INVALID_ARGS, "Requires even number of elements");
         return value_number(0);
       }
 
-      size_t vec_size = node->child_count / 2;
-      double *vec_a = safe_malloc(vec_size * sizeof(double));
-      double *vec_b = safe_malloc(vec_size * sizeof(double));
+      size_t half = total / 2;
+      double *v_a_data = safe_malloc(half * sizeof(double));
+      double *v_b_data = safe_malloc(half * sizeof(double));
+      memcpy(v_a_data, full, half * sizeof(double));
+      memcpy(v_b_data, full + half, half * sizeof(double));
+      safe_free(full);
 
-      for (size_t i = 0; i < vec_size; i++) {
-        value_t arg_a = eval_node(node->children[i], ctx, error);
-        if (!error_is_ok(*error)) {
-          safe_free(vec_a);
-          safe_free(vec_b);
-          return value_number(0);
-        }
-        vec_a[i] = arg_a.as.number;
-        value_free(&arg_a);
-
-        value_t arg_b = eval_node(node->children[vec_size + i], ctx, error);
-        if (!error_is_ok(*error)) {
-          safe_free(vec_a);
-          safe_free(vec_b);
-          return value_number(0);
-        }
-        vec_b[i] = arg_b.as.number;
-        value_free(&arg_b);
-      }
-
-      value_t a = value_array(vec_a, vec_size);
-      value_t b = value_array(vec_b, vec_size);
+      value_t v_a = value_array(v_a_data, half);
+      value_t v_b = value_array(v_b_data, half);
 
       value_t result;
-      if (strcmp(fname, "vec_add") == 0) {
-        result = linalg_vec_add(&a, &b, error);
-      } else if (strcmp(fname, "vec_sub") == 0) {
-        result = linalg_vec_sub(&a, &b, error);
-      } else { // vec_dot
-        double dot = linalg_vec_dot(&a, &b, error);
-        value_free(&a);
-        value_free(&b);
-        return value_number(dot);
-      }
+      if (strcmp(fname, "vec_add") == 0)
+        result = linalg_vec_add(&v_a, &v_b, error);
+      else if (strcmp(fname, "vec_sub") == 0)
+        result = linalg_vec_sub(&v_a, &v_b, error);
+      else
+        result = value_number(linalg_vec_dot(&v_a, &v_b, error));
 
-      value_free(&a);
-      value_free(&b);
+      value_free(&v_a);
+      value_free(&v_b);
       return result;
     }
   }
@@ -623,122 +660,96 @@ static value_t eval_function(ast_node_t *node, engine_context_t *ctx,
   }
 
   // Logic operators
-  // and(a, b) = logical AND
-  if (strcmp(fname, "and") == 0) {
-    if (node->child_count != 2) {
-      *error = error_create(ERR_INVALID_ARGS, "and requires 2 arguments");
-      return value_number(0);
-    }
-    value_t a = eval_node(node->children[0], ctx, error);
+  if (strcmp(fname, "and") == 0 || strcmp(fname, "or") == 0 ||
+      strcmp(fname, "xor") == 0) {
+    size_t data_size;
+    double *data = collect_args(node, ctx, error, &data_size);
     if (!error_is_ok(*error))
       return value_number(0);
-    value_t b = eval_node(node->children[1], ctx, error);
-    if (!error_is_ok(*error)) {
-      value_free(&a);
+    if (data_size < 2) {
+      safe_free(data);
+      *error = error_create(ERR_INVALID_ARGS, "Logic ops require 2+ arguments");
       return value_number(0);
     }
-    double result = (a.as.number != 0.0 && b.as.number != 0.0) ? 1.0 : 0.0;
-    value_free(&a);
-    value_free(&b);
-    return value_number(result);
-  }
-
-  // or(a, b) = logical OR
-  if (strcmp(fname, "or") == 0) {
-    if (node->child_count != 2) {
-      *error = error_create(ERR_INVALID_ARGS, "or requires 2 arguments");
-      return value_number(0);
+    int res = (data[0] != 0.0);
+    for (size_t i = 1; i < data_size; i++) {
+      int val = (data[i] != 0.0);
+      if (strcmp(fname, "and") == 0)
+        res = res && val;
+      else if (strcmp(fname, "or") == 0)
+        res = res || val;
+      else
+        res = res ^ val;
     }
-    value_t a = eval_node(node->children[0], ctx, error);
-    if (!error_is_ok(*error))
-      return value_number(0);
-    value_t b = eval_node(node->children[1], ctx, error);
-    if (!error_is_ok(*error)) {
-      value_free(&a);
-      return value_number(0);
-    }
-    double result = (a.as.number != 0.0 || b.as.number != 0.0) ? 1.0 : 0.0;
-    value_free(&a);
-    value_free(&b);
-    return value_number(result);
-  }
-
-  // xor(a, b) = logical XOR
-  if (strcmp(fname, "xor") == 0) {
-    if (node->child_count != 2) {
-      *error = error_create(ERR_INVALID_ARGS, "xor requires 2 arguments");
-      return value_number(0);
-    }
-    value_t a = eval_node(node->children[0], ctx, error);
-    if (!error_is_ok(*error))
-      return value_number(0);
-    value_t b = eval_node(node->children[1], ctx, error);
-    if (!error_is_ok(*error)) {
-      value_free(&a);
-      return value_number(0);
-    }
-    int a_bool = (a.as.number != 0.0);
-    int b_bool = (b.as.number != 0.0);
-    double result = (a_bool != b_bool) ? 1.0 : 0.0;
-    value_free(&a);
-    value_free(&b);
-    return value_number(result);
+    safe_free(data);
+    return value_number(res ? 1.0 : 0.0);
   }
 
   // Set operations (treat arguments as two sets split in half)
   if (strcmp(fname, "set_union") == 0 || strcmp(fname, "set_intersect") == 0 ||
       strcmp(fname, "set_diff") == 0) {
-    if (node->child_count < 2 || node->child_count % 2 != 0) {
+    if (node->child_count == 2) {
+      value_t a = eval_node(node->children[0], ctx, error);
+      if (!error_is_ok(*error))
+        return value_number(0);
+      value_t b = eval_node(node->children[1], ctx, error);
+      if (!error_is_ok(*error)) {
+        value_free(&a);
+        return value_number(0);
+      }
+
+      if (a.type == VALUE_ARRAY && b.type == VALUE_ARRAY) {
+        double *res_data;
+        size_t res_size;
+        if (strcmp(fname, "set_union") == 0)
+          res_data =
+              set_union(a.as.array.data, a.as.array.size, b.as.array.data,
+                        b.as.array.size, &res_size, error);
+        else if (strcmp(fname, "set_intersect") == 0)
+          res_data = set_intersection(a.as.array.data, a.as.array.size,
+                                      b.as.array.data, b.as.array.size,
+                                      &res_size, error);
+        else
+          res_data =
+              set_difference(a.as.array.data, a.as.array.size, b.as.array.data,
+                             b.as.array.size, &res_size, error);
+        value_free(&a);
+        value_free(&b);
+        if (!error_is_ok(*error) || !res_data)
+          return value_number(0);
+        return value_array(res_data, res_size);
+      }
+      value_free(&a);
+      value_free(&b);
+    }
+
+    size_t total;
+    double *full = collect_args(node, ctx, error, &total);
+    if (!error_is_ok(*error))
+      return value_number(0);
+    if (total < 2 || total % 2 != 0) {
+      safe_free(full);
       *error = error_create(ERR_INVALID_ARGS,
-                            "Set operations require even number of arguments");
+                            "Set ops require even number of elements");
       return value_number(0);
     }
 
-    size_t half = node->child_count / 2;
-    double *set_a = safe_malloc(half * sizeof(double));
-    double *set_b = safe_malloc(half * sizeof(double));
+    size_t half = total / 2;
+    size_t res_size = 0;
+    double *res_data = NULL;
+    if (strcmp(fname, "set_union") == 0)
+      res_data = set_union(full, half, full + half, half, &res_size, error);
+    else if (strcmp(fname, "set_intersect") == 0)
+      res_data =
+          set_intersection(full, half, full + half, half, &res_size, error);
+    else
+      res_data =
+          set_difference(full, half, full + half, half, &res_size, error);
 
-    for (size_t i = 0; i < half; i++) {
-      value_t arg_a = eval_node(node->children[i], ctx, error);
-      if (!error_is_ok(*error)) {
-        safe_free(set_a);
-        safe_free(set_b);
-        return value_number(0);
-      }
-      set_a[i] = arg_a.as.number;
-      value_free(&arg_a);
-
-      value_t arg_b = eval_node(node->children[half + i], ctx, error);
-      if (!error_is_ok(*error)) {
-        safe_free(set_a);
-        safe_free(set_b);
-        return value_number(0);
-      }
-      set_b[i] = arg_b.as.number;
-      value_free(&arg_b);
-    }
-
-    size_t result_size = 0;
-    double *result_data = NULL;
-
-    if (strcmp(fname, "set_union") == 0) {
-      result_data = set_union(set_a, half, set_b, half, &result_size, error);
-    } else if (strcmp(fname, "set_intersect") == 0) {
-      result_data =
-          set_intersection(set_a, half, set_b, half, &result_size, error);
-    } else { // set_diff
-      result_data =
-          set_difference(set_a, half, set_b, half, &result_size, error);
-    }
-
-    safe_free(set_a);
-    safe_free(set_b);
-
-    if (!error_is_ok(*error) || !result_data) {
+    safe_free(full);
+    if (!error_is_ok(*error) || !res_data)
       return value_number(0);
-    }
-
-    return value_array(result_data, result_size);
+    return value_array(res_data, res_size);
   }
 
   *error = error_create(ERR_UNSUPPORTED, "Unknown function");
