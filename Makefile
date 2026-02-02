@@ -1,8 +1,11 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -pedantic -std=c11 -O2 -g
-CFLAGS += -fstack-protector-strong -D_FORTIFY_SOURCE=2
+CFLAGS += -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
 CFLAGS += -I./include
+
+# AddressSanitizer for debugging (use with: make debug or make debug-full)
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
 
 # Directories
 SRC_DIR = src
@@ -106,9 +109,20 @@ run-cli: $(CLI_BIN)
 run-gui: $(GUI_BIN)
 	./$(GUI_BIN)
 
-# Valgrind memory check
-valgrind: $(CLI_BIN)
+# Valgrind memory check (Linux)
+valgrind: fclean $(CLI_BIN)
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./$(CLI_BIN) "3 + 4 * 2"
+
+# Debug with AddressSanitizer (Cross-platform: macOS/Linux)
+debug: fclean
+	@$(MAKE) CFLAGS="$(CFLAGS) $(ASAN_FLAGS)" all
+	@echo "Built $(CLI_BIN) with AddressSanitizer."
+	@echo "Running test expression..."
+	./$(CLI_BIN) "mean(10, 20, 30)"
+
+debug-full: fclean
+	@$(MAKE) CFLAGS="$(CFLAGS) $(ASAN_FLAGS)" GTK_CFLAGS="$(GTK_CFLAGS) $(ASAN_FLAGS)" full
+	@echo "Built $(CLI_BIN) and $(GUI_BIN) with AddressSanitizer."
 
 # Test
 test: $(CLI_BIN)
@@ -119,4 +133,4 @@ test: $(CLI_BIN)
 	@./$(CLI_BIN) "10 % 3" | grep -q "1" && echo "✓ Modulo" || echo "✗ Modulo"
 	@echo "All tests completed!"
 
-.PHONY: all full clean fclean re run-cli run-gui valgrind test
+.PHONY: all full clean fclean re debug debug-full run-cli run-gui valgrind test
