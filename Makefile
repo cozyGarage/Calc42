@@ -84,11 +84,19 @@ $(OBJ_DIR):
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# Clean
+# Clean object files
 clean:
 	rm -rf $(OBJ_DIR)
+	@echo "Objects cleaned."
+
+# Clean objects and binaries
+fclean: clean
 	rm -f $(CLI_BIN) $(GUI_BIN)
 	rm -f calc42.log
+	@echo "Binaries and logs cleaned."
+
+# Rebuild everything
+re: fclean all
 
 # Run CLI
 run-cli: $(CLI_BIN)
@@ -111,4 +119,4 @@ test: $(CLI_BIN)
 	@./$(CLI_BIN) "10 % 3" | grep -q "1" && echo "✓ Modulo" || echo "✗ Modulo"
 	@echo "All tests completed!"
 
-.PHONY: all full clean run-cli run-gui valgrind test
+.PHONY: all full clean fclean re run-cli run-gui valgrind test
