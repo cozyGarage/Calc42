@@ -377,7 +377,6 @@ We maintain 100% pass rate across 240+ automated tests. Detailed reports can be 
 
 - [Shunting-yard Algorithm](https://en.wikipedia.org/wiki/Shunting-yard_algorithm)
 - [GTK4 Documentation](https://docs.gtk.org/gtk4/)
-- [42 School Curriculum](https://42.fr/)
 
 ## AI Usage Disclosure
 
@@ -389,14 +388,6 @@ This project was developed with assistance from AI (Google Antigravity/Gemini) a
 - Documentation and code organization
 
 All code has been reviewed, understood, and customized to meet project requirements and coding standards.
-
-## License
-
-Educational project - see 42 school curriculum for details.
-
-## Author
-
-Created for the 42 curriculum by cozygarage.
 
 ---
 
