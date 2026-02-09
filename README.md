@@ -20,7 +20,7 @@ A robust, secure, and feature-rich calculator suite built in pure C with GTK4 GU
 - **Statistics**: Mean, median, mode, variance, stddev, z-score, correlation
 - **Probability**: Combinations, permutations, factorial, binomial & geometric distributions
 - **Discrete Math**: GCD, LCM, modular arithmetic, primality, set operations, logic ops
-- **Linear Algebra**: Vectors and Matrices (add, sub, mul, det, transpose)
+- **Linear Algebra**: Vectors and Matrices (add, sub, mul, det, transpose).
 
 ## Installation
 
